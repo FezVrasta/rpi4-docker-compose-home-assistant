@@ -1,0 +1,105 @@
+version: "3"
+services:
+
+  # Make sure to update the TZ, and the volumes mount points
+  # in my case the /downloads points to an external drive
+  transmission:
+    image: linuxserver/transmission
+    container_name: transmission
+    restart: unless-stopped
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Europe/Budapest
+      - TRANSMISSION_WEB_HOME=/combustion-release/
+    volumes:
+      - ./services/transmission/data/config:/config
+      - /mnt/4tbdrive/NVIDIA_SHIELD/plex:/downloads
+      - ./services/transmission/data/watch:/watch
+    ports:
+      - 9091:9091
+      - 51413:51413
+      - 51413:51413/udp
+
+  # Change the TZ!
+  # Also, replaced ttyAMA0 with ttyS0 in case your bluetooth is on ttyS0
+  homeassistant:
+    image: homeassistant/raspberrypi4-homeassistant
+    container_name: homeassistant
+    depends_on:
+      - deconz
+      - transmission
+    healthcheck:
+      test: ["CMD", "curl", "-s", "http://localhost:8123"]
+      interval: 5s
+      timeout: 3s
+      retries: 100
+    restart: unless-stopped
+    privileged: true
+    network_mode: host
+    environment:
+      - TZ=Europe/Budapest
+    devices:
+      - /dev/ttyAMA0
+      - /dev/vcio
+    volumes:
+      - ./services/homeassistant/data/config:/config
+
+  noip:
+    build:
+      context: ./services/noip
+    container_name: noip
+    restart: unless-stopped
+    environment:
+      - NOIP_USERNAME=xxxxxxx@xxxxx.xxx
+      - NOIP_PASSWORD=xxxxxxxxxxx # be aware! Do not use special characters because docker-compose will yell at you
+      - NOIP_HOSTNAME=xxxxxx.ddns.net
+      - PERIOD=60 # this can definitely be higher, now it's 1 minute
+
+  deconz:
+    image: marthoc/deconz
+    container_name: deconz
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      - DECONZ_WEB_PORT=8080
+      - DECONZ_WS_PORT=8443
+      - TZ=Europe/Budapest
+      - DECONZ_UPNP=0
+      - DECONZ_DEVICE=/dev/ttyS0 # change this to ttyAMA0 if your RaspBee is on it
+    devices:
+     - /dev/ttyS0 # change this to ttyAMA0 if your RaspBee is on it
+    volumes:
+      - ./services/deconz/data/config:/root/.local/share/dresden-elektronik/deCONZ
+      - /etc/localtime:/etc/localtime:ro
+
+  letsencrypt:
+    image: linuxserver/letsencrypt
+    container_name: letsencrypt
+    cap_add:
+      - NET_ADMIN
+    depends_on:
+      - homeassistant
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Europe/Budapest # Change this!
+      - URL=xxxxxx.ddns.net
+      - VALIDATION=http
+    volumes:
+      - ./services/letsencrypt/data/config:/config
+    ports:
+      - 443:443
+      - 80:80
+    restart: unless-stopped
+
+  nodered:
+    build:
+      context: ./services/nodered/
+    container_name: nodered
+    depends_on:
+      - homeassistant
+    ports:
+      - 1880:1880
+    volumes:
+      - ./services/nodered/data/data:/data
